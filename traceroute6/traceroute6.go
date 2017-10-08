@@ -8,10 +8,11 @@ import (
 	"net"
 	"syscall"
 	"time"
+	"log"
 )
 
 const DEFAULT_PORT = 33434
-const DEFAULT_MAX_HOPS = 64
+const DEFAULT_MAX_HOPS = 1
 const DEFAULT_TIMEOUT_MS = 500
 const DEFAULT_RETRIES = 3
 const DEFAULT_PACKET_SIZE = 52
@@ -210,7 +211,7 @@ func Traceroute(dest string, options *TracerouteOptions, c ...chan TracerouteHop
 	ttl := 1
 	retry := 0
 	for {
-		//log.Println("TTL: ", ttl)
+		log.Println("TTL: ", ttl)
 		start := time.Now()
 
 		// Set up the socket to receive inbound packets
@@ -227,7 +228,7 @@ func Traceroute(dest string, options *TracerouteOptions, c ...chan TracerouteHop
 			return result, err
 		}
 		// This sets the current hop TTL
-		syscall.SetsockoptInt(sendSocket, 0x0, syscall.IP_TTL, ttl)
+		syscall.SetsockoptInt(sendSocket, 0x0, syscall.IPV6_HOPLIMIT, 1)
 		// This sets the timeout to wait for a response from the remote host
 		syscall.SetsockoptTimeval(recvSocket, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
 
