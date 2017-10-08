@@ -7,6 +7,7 @@ import (
 	"../traceroute"
 	"github.com/nsf/termbox-go"
 	"net"
+	"os"
 	"time"
 )
 
@@ -25,15 +26,19 @@ func printHop(hop traceroute.TracerouteHop, i int) {
 	}
 }
 
-/*
-func address(address [4]byte) string {
-	return fmt.Sprintf("%v.%v.%v.%v", address[0], address[1], address[2], address[3])
-}
-*/
-
 func drawLine(x, y int, str string) {
 	color := termbox.ColorDefault
 	backgroundColor := termbox.ColorDefault
+	runes := []rune(str)
+
+	for n := 0; n < len(runes); n += 1 {
+		termbox.SetCell(x+n, y, runes[n], color, backgroundColor)
+	}
+}
+
+func drawLineFull(x, y int, str string, lineAttr, backAttr termbox.Attribute) {
+	color := lineAttr
+	backgroundColor := backAttr
 	runes := []rune(str)
 
 	for n := 0; n < len(runes); n += 1 {
@@ -49,17 +54,10 @@ func fill(x, y, w, h int, cell termbox.Cell) {
 	}
 }
 
-func keyEventLoop(killKey chan termbox.Key, chanMaxX, chanMaxY chan int) {
-	for {
-		switch ev := termbox.PollEvent(); ev.Type {
-		case termbox.EventKey:
-			killKey <- ev.Key
-		case termbox.EventResize:
-			maxX, maxY := termbox.Size()
-			chanMaxX <- maxX
-			chanMaxY <- maxY
-		default:
-		}
+func tbprint(x, y int, fg, bg termbox.Attribute, msg string) {
+	for _, c := range msg {
+		termbox.SetCell(x, y, c, fg, bg)
+		x++
 	}
 }
 
@@ -83,18 +81,17 @@ func traceLoop(chanMaxX, chanMaxY chan int) {
 	//fmt.Printf("traceroute to %v (%v), %v hops max, %v byte packets\n", host, ipAddr, options.MaxHops(), options.PacketSize())
 	drawLine(1, 0, fmt.Sprintf("traceroute to %v (%v), %v hops max, %v byte packets\n", host, ipAddr, options.MaxHops(), options.PacketSize()))
 
-	go func () {
+	go func() {
 		for {
 			select {
-			case <- chanMaxX:
+			case <-chanMaxX:
 				//maxX, maxY = termbox.Size()
-				maxX = <- chanMaxX
-				maxY = <- chanMaxY
+				maxX = <-chanMaxX
+				maxY = <-chanMaxY
 			default:
 			}
 		}
 	}()
-
 
 	for {
 		i := 1
@@ -107,7 +104,6 @@ func traceLoop(chanMaxX, chanMaxY chan int) {
 					done <- struct{}{}
 				}
 				printHop(hop, i)
-				drawLine(100, 0, fmt.Sprintf("%v:%v", maxX, maxY))
 				termbox.Flush()
 				i++
 			}
@@ -115,13 +111,19 @@ func traceLoop(chanMaxX, chanMaxY chan int) {
 
 		_, err = traceroute.Traceroute(host, &options, c)
 		if err != nil {
-			fmt.Printf("Error: ", err)
+			termbox.Close()
+			fmt.Println("Error: ", err)
+			os.Exit(1)
 		}
 		<-done
-		fill(0, 1, 80, maxY-1, termbox.Cell{Ch: ' '})
 		time.Sleep(2000 * time.Millisecond)
+		fill(0, 1, 80, maxY-1, termbox.Cell{Ch: ' '})
 	}
 }
+
+//var edit_box EditBox
+
+//const edit_box_width = 30
 
 func main() {
 
@@ -132,27 +134,53 @@ func main() {
 
 	defer termbox.Close()
 
+	text := make([]string, 0, 30)
+	//tmp := make([]string, 0, 30)
 	maxX, maxY := termbox.Size()
 	chanMaxX, chanMaxY := make(chan int, maxX), make(chan int, maxY)
 
-	//terch := make(chan struct{})
-
-	killKey := make(chan termbox.Key)
+	cursX := 80
+	termbox.SetCursor(cursX+1, 2)
 
 	go traceLoop(chanMaxX, chanMaxY)
-	go keyEventLoop(killKey, chanMaxX, chanMaxY)
 
 	for {
-		select {
-		case wait := <-killKey:
-			switch wait {
+		switch ev := termbox.PollEvent(); ev.Type {
+		case termbox.EventKey:
+			switch ev.Key {
 			case termbox.KeyEsc, termbox.KeyCtrlC:
 				return
+			case termbox.KeyBackspace:
+				if cursX > 80 {
+					cursX--
+					termbox.SetCursor(cursX+1, 2)
+					drawLine(cursX+1, 2, " ")
+
+					//tmp := make([]string, 0, len(text)-1)
+					text = text[:len(text)-1]
+					//copy(tmp, text)
+					termbox.Flush()
+				}
+			case termbox.KeyEnter:
+				x := 80
+				fill(x, 2, maxX-x, 2, termbox.Cell{Ch: ' '})
+				for _, s := range text {
+					drawLineFull(x+1, 3, s, termbox.ColorRed, termbox.ColorDefault)
+					x++
+				}
+				text = make([]string, 0, 30)
+				cursX = 80
+				termbox.SetCursor(cursX+1, 2)
+				termbox.Flush()
+			default:
+				if cursX < maxX-1 {
+					cursX++
+					termbox.SetCursor(cursX+1, 2)
+					drawLine(cursX, 2, fmt.Sprintf("%c", ev.Ch))
+					termbox.Flush()
+					text = append(text, fmt.Sprintf("%c", ev.Ch))
+				}
 			}
-		//case <-terch:
-		//	maxX, maxY = termbox.Size()
-		//	chanMaxX <- maxX
-		//	chanMaxY <- maxY
 		}
 	}
 }
