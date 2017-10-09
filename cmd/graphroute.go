@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func printHop(hop traceroute.TracerouteHop, i int) {
+func printHop(hop traceroute.TracerouteHop, i int, kill chan struct{}) {
 	addr := fmt.Sprintf("%v.%v.%v.%v", hop.Address[0], hop.Address[1], hop.Address[2], hop.Address[3])
 	hostOrAddr := addr
 	if hop.Host != "" {
@@ -61,13 +61,16 @@ func tbprint(x, y int, fg, bg termbox.Attribute, msg string) {
 	}
 }
 
-func traceLoop(chanMaxX, chanMaxY chan int) {
-	var m = flag.Int("m", traceroute.DEFAULT_MAX_HOPS, `Set the max time-to-live (max number of hops) used in outgoing probe packets (default is 64)`)
-	var q = flag.Int("q", 1, `Set the number of probes per "ttl" to nqueries (default is one probe).`)
-	maxX, maxY := termbox.Size()
+var m = flag.Int("m", traceroute.DEFAULT_MAX_HOPS, `Set the max time-to-live (max number of hops) used in outgoing probe packets (default is 64)`)
+var q = flag.Int("q", 1, `Set the number of probes per "ttl" to nqueries (default is one probe).`)
 
-	flag.Parse()
-	host := flag.Arg(0)
+func traceLoop(host string, maxX, maxY int, skip, received chan struct{}) {
+//	var m = flag.Int("m", traceroute.DEFAULT_MAX_HOPS, `Set the max time-to-live (max number of hops) used in outgoing probe packets (default is 64)`)
+//	var q = flag.Int("q", 1, `Set the number of probes per "ttl" to nqueries (default is one probe).`)
+	//maxX, maxY := termbox.Size()
+
+//	flag.Parse()
+	//host := flag.Arg(0)
 
 	options := traceroute.TracerouteOptions{}
 	options.SetRetries(*q - 1)
@@ -78,48 +81,59 @@ func traceLoop(chanMaxX, chanMaxY chan int) {
 		return
 	}
 
-	//fmt.Printf("traceroute to %v (%v), %v hops max, %v byte packets\n", host, ipAddr, options.MaxHops(), options.PacketSize())
 	drawLine(1, 0, fmt.Sprintf("traceroute to %v (%v), %v hops max, %v byte packets\n", host, ipAddr, options.MaxHops(), options.PacketSize()))
 
-	go func() {
-		for {
-			select {
-			case <-chanMaxX:
-				//maxX, maxY = termbox.Size()
-				maxX = <-chanMaxX
-				maxY = <-chanMaxY
-			default:
-			}
-		}
-	}()
-
-	for {
-		i := 1
-		c := make(chan traceroute.TracerouteHop, 0)
-		done := make(chan struct{}, 0)
+	/*
 		go func() {
 			for {
-				hop, ok := <-c
-				if !ok {
-					done <- struct{}{}
+				select {
+				case <-chanMaxX:
+					//maxX, maxY = termbox.Size()
+					maxX = <-chanMaxX
+					maxY = <-chanMaxY
+				default:
 				}
-				printHop(hop, i)
-				termbox.Flush()
-				i++
 			}
 		}()
+	*/
 
-		_, err = traceroute.Traceroute(host, &options, c)
-		if err != nil {
-			termbox.Close()
-			fmt.Println("Error: ", err)
-			os.Exit(1)
+	//done := make(chan struct{}, 0)
+	kill := make(chan struct{}, 0)
+
+			i := 1
+			c := make(chan traceroute.TracerouteHop, 0)
+			var hop traceroute.TracerouteHop
+			var ok bool
+			go func() {
+				for {
+					select {
+					case hop, ok = <-c:
+						switch ok {
+						case false:
+							//done <- struct{}{}
+							return
+						case true:
+							printHop(hop, i, kill)
+							termbox.Flush()
+							i++
+						}
+					//case <-kill:
+					//	return
+					default:
+					}
+				}
+			}()
+
+			_, err = traceroute.Traceroute(host, &options, kill, c)
+			if err != nil {
+				termbox.Close()
+				fmt.Println("Error: ", err)
+				os.Exit(1)
+			}
+			//<-done
+			time.Sleep(1000 * time.Millisecond)
+			fill(0, 1, 80, maxY-1, termbox.Cell{Ch: ' '})
 		}
-		<-done
-		time.Sleep(2000 * time.Millisecond)
-		fill(0, 1, 80, maxY-1, termbox.Cell{Ch: ' '})
-	}
-}
 
 //var edit_box EditBox
 
@@ -132,17 +146,29 @@ func main() {
 		panic(err)
 	}
 
+	flag.Parse()
+
 	defer termbox.Close()
 
 	text := make([]string, 0, 30)
 	//tmp := make([]string, 0, 30)
 	maxX, maxY := termbox.Size()
-	chanMaxX, chanMaxY := make(chan int, maxX), make(chan int, maxY)
+	//chanMaxX, chanMaxY := make(chan int, maxX), make(chan int, maxY)
+
+	skip := make(chan struct{}, 0)
+	received := make(chan struct{}, 0)
+	host := flag.Arg(0)
+	huff := host
 
 	cursX := 80
 	termbox.SetCursor(cursX+1, 2)
 
-	go traceLoop(chanMaxX, chanMaxY)
+	go func() {
+		for {
+			host = huff
+			traceLoop(host, maxX, maxY, skip, received)
+		}
+	}()
 
 	for {
 		switch ev := termbox.PollEvent(); ev.Type {
@@ -163,9 +189,11 @@ func main() {
 				}
 			case termbox.KeyEnter:
 				x := 80
+				huff = ""
 				fill(x, 2, maxX-x, 2, termbox.Cell{Ch: ' '})
 				for _, s := range text {
 					drawLineFull(x+1, 3, s, termbox.ColorRed, termbox.ColorDefault)
+					huff = huff + s
 					x++
 				}
 				text = make([]string, 0, 30)

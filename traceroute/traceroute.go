@@ -163,7 +163,7 @@ func closeNotify(channels []chan TracerouteHop) {
 //
 // Returns a TracerouteResult which contains an array of hops. Each hop includes
 // the elapsed time and its IP address.
-func Traceroute(dest string, options *TracerouteOptions, c ...chan TracerouteHop) (result TracerouteResult, err error) {
+func Traceroute(dest string, options *TracerouteOptions, kill chan struct{},  c ...chan TracerouteHop) (result TracerouteResult, err error) {
 	result.Hops = []TracerouteHop{}
 	destAddr, err := destAddr(dest)
 	result.DestinationAddress = destAddr
@@ -178,6 +178,12 @@ func Traceroute(dest string, options *TracerouteOptions, c ...chan TracerouteHop
 	ttl := 1
 	retry := 0
 	for {
+		select {
+			case <-kill:
+				closeNotify(c)
+				return result, nil
+			default:
+			}
 		//log.Println("TTL: ", ttl)
 		start := time.Now()
 
